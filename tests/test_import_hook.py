@@ -1,5 +1,5 @@
-"""The future-import hook is Store.save(actor, owner_id, payload). It shares validation,
-permissions and persistence with interactive editing (see README, "Importing characters later")."""
+"""The import hook is Store.save(actor, owner_id, payload). It shares validation, permissions and
+persistence with interactive editing (see README, "Importing characters from code")."""
 import json
 
 import pytest

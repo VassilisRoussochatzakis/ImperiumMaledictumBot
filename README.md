@@ -92,8 +92,8 @@ When `DEV_GUILD_ID` is empty the commands are global; the first global registrat
 an hour to show up in Discord clients, and may need a client restart (Ctrl+R in desktop Discord).
 
 To verify: right-click any member (on mobile, tap their name and then the ⋯ menu) and look for
-**Apps → View Character**. Type `/character` in a channel and the `view`, `edit`, `create` and
-`delete` subcommands should be offered. Administrators also see `/setup gm-role`.
+**Apps → View Character**. Type `/character` in a channel and the `view`, `edit`, `create`,
+`delete`, `export` and `import` subcommands should be offered. Administrators also see `/setup gm-role`.
 
 ## 5. Configure the GM role (administrators)
 
@@ -150,6 +150,57 @@ Skill specialisations are entered one per line as *name* then *total*, for examp
 `Adeptus Mechanicus 45`. Ratings are whole numbers from 0 to 100. If a form fails validation the
 card explains why and nothing is changed.
 
+### Copy a character as text, or import one
+
+For writing a whole character at once instead of form by form:
+
+1. `/character export` sends you your character as text (a blank template if you have none yet).
+   Only you see it.
+2. Copy the text, change what you like, then run `/character import` and paste it into the box.
+3. The bot shows a **preview**: it lists what your text changes, what it leaves alone, and any lines
+   it could not read. Nothing is saved until you press **Save**. **Cancel** throws it away.
+
+The text looks like this. One entry per line; columns are separated by `|`; the heading of each
+list shows its columns:
+
+```
+Name: Vex Harrow
+Description: A disgraced Administratum clerk.
+
+CHARACTERISTICS
+WS 30, BS 42, Str 28, Tgh 35, Ag 40, Int 48, Per 38, Wil 33, Fel 31
+
+SKILLS (Skill Total (Specialisation Total, ...) | Notes)
+Lore 58 (Adeptus Administratum 63) | Knows the forms.
+Awareness 43
+
+TALENTS (Talent | Effect)
+Bureaucratic Insight | Re-roll one Lore test per session.
+
+WEAPONS (Name | Damage | Range | Mag. | Traits & notes)
+Laspistol | 6 | Medium | 15 | Reliable
+
+ARMOUR (Name | Locations | Armour | Enc. | Traits & notes)
+Flak Coat | Body, Arms | 3 | 1
+
+OTHER EQUIPMENT (Name | Quantity | Notes)
+Ration packs | 6
+```
+
+- **Anything you leave out stays as it is.** A text with only a `TALENTS` heading and its lines
+  replaces the talents and keeps everything else. A heading with no lines under it empties
+  that list. `WS -` empties one characteristic.
+- Upper or lower case, bullets (`-`, `•`, `1.`) and Markdown are fine. If you copy the whole bot
+  message, only the part inside the grey box is read.
+- **The paste box holds at most 4000 characters**, and Discord will not take more. If your text
+  fills the box completely, the preview warns that the end may have been cut off. For longer text,
+  either import one section at a time or save the text as a `.txt` file and attach it to
+  `/character import` (the **file** option). `/character export` attaches a file itself when the
+  character is too long for one message, and says so when it is over 4000 characters.
+- GMs and administrators can import for someone else with `/character import member:@Player`.
+  Anyone can export any character, because anyone can view it.
+- Line breaks inside an entry's notes become spaces.
+
 ### Delete a character
 
 ```
@@ -162,14 +213,14 @@ Asks for confirmation. GMs and administrators may add `member:@Player`.
 
 | Action | Owner | GM role | Administrator | Others |
 |---|---|---|---|---|
-| View any character on the server | ✓ | ✓ | ✓ | ✓ |
-| Create / edit / delete own character | ✓ | ✓ | ✓ | ✓ |
-| Create / edit / delete another member's character | – | ✓ | ✓ | – |
+| View or export any character on the server | ✓ | ✓ | ✓ | ✓ |
+| Create / edit / import / delete own character | ✓ | ✓ | ✓ | ✓ |
+| Create / edit / import / delete another member's character | – | ✓ | ✓ | – |
 | `/setup gm-role` | – | – | ✓ | – |
 
 Permissions are checked on the server for every command, button, menu choice and form submission,
-not just when the buttons are drawn. If a GM loses the role while a form is open, the submission
-is refused.
+not just when the buttons are drawn. If a GM loses the role while a form or import preview is
+open, the save is refused.
 
 ### Privacy and expiry
 
@@ -179,10 +230,12 @@ stays interactive for 10 minutes after the last click; then its buttons are disa
 says how to reopen it (Apps → View Character or `/character view`). After a bot restart or update,
 buttons on older cards reply "This card has expired" instead; just open a new card. A form left
 open for more than 30 minutes, or across a restart, cannot be submitted; reopen the card and redo
-the change. The delete confirmation expires after two minutes.
+the change. The delete confirmation expires after two minutes. An import preview expires like a
+card, 10 minutes after the last click, and nothing is saved.
 
 If two people edit the same character at once, the second save is refused with a notice and the
-card refreshes to the latest version, so nobody silently overwrites anybody.
+card refreshes to the latest version, so nobody silently overwrites anybody. The same goes for an
+import preview: if anyone saves the character before you press **Save**, the import is refused.
 
 ## 7. Operating the single host
 
@@ -214,10 +267,12 @@ Then copy `data/backup.db` somewhere safe. Running the plain-Python option, use
 3. Copy your backup to `data/characters.db`.
 4. Start the bot again: `docker compose up -d`.
 
-## 8. Importing characters later (for developers)
+## 8. Importing characters from code (for developers)
 
-The future import source is undecided (spreadsheet, PDF, paper transcription…). The bot therefore
-exposes one internal entry point and nothing else: no parsers, uploads or endpoints.
+Players import text with `/character import` (see section 6). The text format lives in
+`imbot/textsheet.py`: `format_text` writes it and `parse_text` turns it into a patch for the one
+internal entry point that every editor and importer uses. Another importer (a spreadsheet, say)
+would call that entry point too.
 
 ```python
 from imbot.store import Store, Actor
@@ -296,8 +351,11 @@ right character; owners can edit themselves and ordinary players cannot edit oth
 administrators can edit within their server but not in another server; cross-server access and
 tampered buttons or menu values are rejected; lost permissions and stale forms cannot change data;
 validation failures preserve saved data; data survives reopening the database; the import hook uses
-the same validation and authorisation; long sheets and empty sections stay within Discord's
-limits; and the command and component payloads sent to Discord are within its limits.
+the same validation and authorisation; exported text reads back unchanged, messy pasted text is
+read forgivingly and unreadable lines are reported; an import saves nothing before **Save** and
+respects permissions and staleness; a full paste box is flagged; `.txt` files are accepted and
+other files refused; long sheets and empty sections stay within Discord's limits; and the command
+and component payloads sent to Discord are within its limits.
 
 ### Live acceptance checklist
 
@@ -324,7 +382,16 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
 11. Wait 10 minutes without touching a card: it shows the expiry text and disabled buttons.
 12. Restart the bot (`docker compose restart`). Click a button on an old card: "This card has
     expired" (private). Open a fresh card: all data is still there.
-13. Nobody ever sees a message in the channel or a DM from the bot during any of the above.
+13. Player A: `/character export`. Copy the text (on mobile: long-press the message → Copy Text),
+    change one characteristic, add a talent line, then `/character import` and paste it. The
+    preview lists the changes; switch sections; press **Save**: the card shows the change.
+14. Player A: paste text that is exactly 4000 characters long (pad it with blank lines). The
+    preview warns that the end may have been cut off. Also try pasting more than 4000 characters
+    and note what your Discord client does with the extra text.
+15. Player A: save a long export as a `.txt` file and run `/character import` with the **file**
+    option: the preview appears after a short "thinking…" message. Attach a PDF: refused.
+16. Player B: `/character import member:@PlayerA` is refused. The GM's is allowed.
+17. Nobody ever sees a message in the channel or a DM from the bot during any of the above.
 
 ## 11. Assumptions and limits
 
@@ -334,5 +401,7 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
 - Discord forms allow five fields, so a weapon form holds Name, Damage, Range, Mag. and a
   *Traits & notes* field for specialisation, test and encumbrance; armour holds Name, Locations,
   Armour, Enc. and *Traits & notes*.
+- Text import reads the bot's own text format (section 6) from a paste or a `.txt` file. It does
+  not read PDFs, Word files or images of character sheets.
 - Not included on purpose: dice rolling, XP/advancement, wounds, corruption, fate, influence,
-  psychic powers, file imports, more than one character per member per server.
+  psychic powers, more than one character per member per server.
