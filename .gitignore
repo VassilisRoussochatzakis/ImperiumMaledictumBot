@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ImperiumMaledictumBot: secrets and local data
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
