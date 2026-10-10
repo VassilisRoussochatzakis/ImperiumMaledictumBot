@@ -4,7 +4,7 @@ from pathlib import Path
 
 import discord
 
-from imbot import bot, model, textsheet
+from imbot import bot, model, render, textsheet
 from tests.conftest import (ADMIN, GM, GM_ROLE, GUILD, OTHER_GUILD, OWNER, PLAYER, Fake, User, actor, button, choose,
                             click, labels, open_card, run, submit)
 
@@ -15,7 +15,7 @@ def test_all_sends_go_through_reply_and_are_ephemeral_except_the_roll_result():
     src = Path(bot.__file__).read_text(encoding="utf-8")
     body = src.split("async def reply(")[1].split("\n\n\n")[0]
     assert body.count("ephemeral=True") == 2  # both the first response and the follow-up branch
-    roll = src.split("async def character_roll(")[1].split("\n\n\n")[0]
+    roll = src.split("async def post_roll(")[1].split("\n\n\n")[0]
     assert roll.count("send_message(") == 1  # the one public message
     outside = src.replace(body, "").replace(roll, "")
     assert "send_message(" not in outside and "followup.send(" not in outside and ".send(" not in outside
@@ -609,6 +609,86 @@ def test_roll_refuses_privately_what_it_cannot_roll(card_user_store):
             assert i.last[0] == "send_message" and i.last[2].get("ephemeral") is True and "Nothing was rolled" in i.last[1]
         i2 = await roll("Lore", user=PLAYER)
         assert i2.last[2].get("ephemeral") is True and "no character" in i2.last[1]
+    run(scenario())
+
+
+def roll_labels(view):
+    return [item.label for item in view.children if ":roll:" in item.custom_id]
+
+
+async def click_roll(card, label, user=OWNER):
+    """Click a card's roll button as ``user``; its answer may be the one public message."""
+    i = Fake(User(user), message=object())
+    i.response.public_ok = True
+    assert await card.interaction_check(i)
+    await button(card, label).callback(i)
+    return i
+
+
+def test_skill_roll_buttons_post_the_stored_rating(card_user_store, monkeypatch):
+    monkeypatch.setattr(bot.rolls.random, "randint", lambda a, b: 42)
+    async def scenario():
+        card, _ = await open_card(User(OWNER))
+        assert roll_labels(card) == []  # Characteristics: no buttons
+        await click(card, "Skills", User(OWNER))
+        assert roll_labels(card) == ["Lore — 58", "Lore (Adeptus Administratum) — 63", "Awareness — 43"]
+        i = await click_roll(card, "Lore (Adeptus Administratum) — 63")
+        kind, content, kw = i.last
+        assert kind == "send_message" and "ephemeral" not in kw and len(i.log) == 1  # posted in the channel, card untouched
+        assert content == "\n**Vex Harrow** rolled: **42** with a target of **63**\n**Success** (+2 SL) on **Lore (Adeptus Administratum)**!"
+        card_user_store.save(actor(GM, roles=[GM_ROLE]), OWNER,  # GM edit meanwhile: Stealth takes Awareness's place
+                             {"skills": [{"name": "Lore", "rating": 60}, {"name": "Stealth", "rating": 41}]})
+        assert "target of **60**" in (await click_roll(card, "Lore — 58")).last[1]  # the stored rating, not the drawn one
+        i2 = await click_roll(card, "Awareness — 43")
+        assert i2.last[0] == "edit_message" and "Nothing was rolled: **Awareness**" in i2.embed.description
+        assert roll_labels(card) == ["Lore — 60", "Stealth — 41"]
+        i3 = await click_roll(card, "Stealth — 41")
+        await card.on_timeout()  # the expiry notice goes to the card, never over a roll result
+        assert i2.last[0] == "edit_original" and "expired" in i2.last[1] and len(i3.log) == 1
+    run(scenario())
+
+
+def test_roll_buttons_only_on_your_own_stored_character(card_user_store):
+    async def scenario():
+        for viewer in (User(PLAYER), User(GM, roles=[GM_ROLE])):
+            card, _ = await open_card(viewer)
+            await click(card, "Skills", viewer)
+            assert roll_labels(card) == []
+        card, _ = await open_card(User(OWNER), editing=True)
+        await click(card, "Skills", User(OWNER))
+        assert roll_labels(card) == [] and "Add skill" in labels(card)
+        await click(card, "Done editing", User(OWNER))
+        assert len(roll_labels(card)) == 3
+        preview = (await paste("SKILLS\nStealth 40")).view
+        await click(preview, "Skills", User(OWNER))
+        assert roll_labels(preview) == [] and "Save" in labels(preview)
+    run(scenario())
+
+
+def test_every_rated_skill_line_gets_one_roll_button_within_discord_limits(card_user_store):
+    skills = [{"name": f"Skill {i:02d} " + "x" * 51, "rating": None if i % 7 == 0 else i,
+               "specialisations": [{"name": f"Specialism{n:02d}", "rating": None if n % 5 == 4 else n} for n in range(i % 15)]}
+              for i in range(model.MAX_ENTRIES - 1)]
+    skills.append({"name": "Lore", "rating": 50, "specialisations": [{"name": f"L{n}", "rating": n} for n in range(20)]})
+    card_user_store.save(actor(OWNER), OWNER, {"skills": skills})
+    async def scenario():
+        card, _ = await open_card(User(OWNER))
+        await click(card, "Skills", User(OWNER))
+        seen = []
+        while True:
+            rows = card.to_components()
+            assert len(rows) <= 5 and all(1 <= len(row["components"]) <= 5 for row in rows) and len(card.embed()) <= 6000
+            for item in card.children:
+                assert len(item.label) <= 80 and len(item.custom_id) <= 100
+            ids = [item.custom_id.split(":")[-2:] for item in card.children if ":roll:" in item.custom_id]
+            assert len(ids) <= 15 and len({item.custom_id for item in card.children}) == len(card.children)
+            seen += [(int(i), int(n)) for i, n in ids]
+            if button(card, "Next ▶").disabled:
+                break
+            await click(card, "Next ▶", User(OWNER))
+        stored = card_user_store.load(GUILD, OWNER)[0]["skills"]
+        expected = [(i, n) for i, s in enumerate(stored) for n in range(min(len(render.skill_rolls(s)), 15))]
+        assert seen == expected  # in sheet order, once each; only Lore's 6 lines past the 15th have no button
     run(scenario())
 
 

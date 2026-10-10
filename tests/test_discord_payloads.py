@@ -49,6 +49,10 @@ def test_card_components_and_embeds_serialise(card_user_store):
             for row in rows:
                 assert row["type"] == 1 and 1 <= len(row["components"]) <= 5
             assert len(card.embed()) <= 6000 and card.embed().to_dict()
+        await click(card, "Done editing", User(OWNER))
+        await click(card, "Skills", User(OWNER))
+        rolls = [c for row in card.to_components() for c in row["components"] if ":roll:" in c["custom_id"]]
+        assert len(rolls) == 3 and all(c["type"] == 2 and c["emoji"]["name"] == "🎲" for c in rolls)
     run(scenario())
 
 
