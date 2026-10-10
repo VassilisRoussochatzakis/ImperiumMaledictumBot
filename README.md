@@ -9,8 +9,9 @@ Every card has four sections: **Characteristics**, **Skills**, **Talents** and *
 commands, buttons, menus and forms. A configurable GM role (and server administrators) can edit
 everyone's characters.
 
-Field names follow the official Cubicle 7 character sheet. The bot stores what you type; it does
-not calculate, roll dice or track advancement.
+Field names follow the official Cubicle 7 character sheet. The bot stores what you type and rolls
+Tests against it (`/character roll`, the one thing it posts in the channel). It does not calculate
+totals or track advancement.
 
 ---
 
@@ -25,8 +26,9 @@ not calculate, roll dice or track advancement.
 4. Under **Installation**, make sure **Guild Install** is enabled (it is by default). The bot does
    not support user install.
 5. Under **OAuth2 → OAuth2 URL Generator** tick the scopes **`bot`** and **`applications.commands`**.
-   Leave every bot permission unticked: the bot only answers interactions privately, so it needs no
-   channel permissions. Copy the generated URL. It looks like:
+   Leave every bot permission unticked: the bot only answers interactions (privately, apart from
+   roll results), and answering an interaction needs no channel permissions. Copy the generated
+   URL. It looks like:
 
    ```
    https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot%20applications.commands&permissions=0
@@ -93,7 +95,7 @@ an hour to show up in Discord clients, and may need a client restart (Ctrl+R in 
 
 To verify: right-click any member (on mobile, tap their name and then the ⋯ menu) and look for
 **Apps → View Character**. Type `/character` in a channel and the `view`, `edit`, `create`,
-`delete`, `export` and `import` subcommands should be offered. Administrators also see `/setup gm-role`.
+`delete`, `export`, `import` and `roll` subcommands should be offered. Administrators also see `/setup gm-role`.
 
 ## 5. Configure the GM role (administrators)
 
@@ -201,6 +203,33 @@ Ration packs | 6
   Anyone can export any character, because anyone can view it.
 - Line breaks inside an entry's notes become spaces.
 
+### Roll a Test
+
+```
+/character roll skill:Lore notes:Reading the forms test_adjustment:-10 advantage:1
+```
+
+Start typing in **skill** and pick one of your character's characteristics, skills or
+specialisations from the list; each shows its rating. Everything else is optional:
+
+| Option | What it does |
+|---|---|
+| **notes** | What the roll is for, shown above the result |
+| **test_adjustment** | The difficulty: added to the rating before rolling, e.g. `20` or `-10` |
+| **advantage** / **disadvantage** | 0 to 10 each; they cancel 1:1. Advantage reverses the dice if that is better, Disadvantage if that is worse, and each one after the first adds (or takes off) 10 |
+| **sl_adjustment** | Added to the SL after rolling, e.g. `1` or `-2`; it can turn a failure into a success or back |
+
+The bot rolls a d100 and posts the result **in the channel**, so the whole table sees it:
+
+> **Test:** Reading the forms
+>
+> **Vex Harrow** rolled: **62**, reversed to **26**, with a target of **48** (skill: **58**, test adjustment: **-10**, Advantage)\
+> **Success** (+2 SL) on **Lore**!
+
+Doubles add **Critical!** or **Fumble!**. Only entries with a rating can be rolled, and only for
+your own character. Typing a name without picking from the list works when it matches exactly one
+entry (`bs` finds Ballistic Skill). Otherwise nothing is rolled and only you see why.
+
 ### Delete a character
 
 ```
@@ -216,6 +245,7 @@ Asks for confirmation. GMs and administrators may add `member:@Player`.
 | View or export any character on the server | ✓ | ✓ | ✓ | ✓ |
 | Create / edit / import / delete own character | ✓ | ✓ | ✓ | ✓ |
 | Create / edit / import / delete another member's character | – | ✓ | ✓ | – |
+| Roll a Test (own character only; the result is public) | ✓ | ✓ | ✓ | ✓ |
 | `/setup gm-role` | – | – | ✓ | – |
 
 Permissions are checked on the server for every command, button, menu choice and form submission,
@@ -225,7 +255,8 @@ open, the save is refused.
 ### Privacy and expiry
 
 Everything the bot says is an *ephemeral* Discord response: visible only to the person who
-clicked, never in the channel history, never a DM. A card belongs to the member who opened it. It
+clicked, never in the channel history, never a DM. The one exception is a roll result, which
+`/character roll` posts in the channel on purpose. A card belongs to the member who opened it. It
 stays interactive for 10 minutes after the last click; then its buttons are disabled and the card
 says how to reopen it (Apps → View Character or `/character view`). After a bot restart or update,
 buttons on older cards reply "This card has expired" instead; just open a new card. A form left
@@ -354,8 +385,10 @@ validation failures preserve saved data; data survives reopening the database; t
 the same validation and authorisation; exported text reads back unchanged, messy pasted text is
 read forgivingly and unreadable lines are reported; an import saves nothing before **Save** and
 respects permissions and staleness; a full paste box is flagged; `.txt` files are accepted and
-other files refused; long sheets and empty sections stay within Discord's limits; and the command
-and component payloads sent to Discord are within its limits.
+other files refused; long sheets and empty sections stay within Discord's limits; rolls use the
+stored rating and every modifier, are the only public message, and privately refuse names that are
+unknown, ambiguous or unrated; Success Levels, Advantage and doubles follow the rulebook examples;
+and the command and component payloads sent to Discord are within its limits.
 
 ### Live acceptance checklist
 
@@ -391,7 +424,14 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
 15. Player A: save a long export as a `.txt` file and run `/character import` with the **file**
     option: the preview appears after a short "thinking…" message. Attach a PDF: refused.
 16. Player B: `/character import member:@PlayerA` is refused. The GM's is allowed.
-17. Nobody ever sees a message in the channel or a DM from the bot during any of the above.
+17. Player A: `/character roll`, type `lore` in **skill**: the list offers Lore and its
+    specialisations with their ratings. Pick one, add notes and send: Player B sees the result in
+    the channel, with Player A's character name and that rating as the target. Roll again with
+    `test_adjustment:-20 advantage:1 sl_adjustment:1`: the target is 20 below the rating and the
+    result lists the test adjustment, Advantage and SL adjustment. Player B (no character):
+    `/character roll` gets a private "no character" reply and nothing is posted.
+18. Apart from the roll results in step 17, nobody ever sees a message in the channel or a DM from
+    the bot during any of the above.
 
 ## 11. Assumptions and limits
 
@@ -403,5 +443,7 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
   Armour, Enc. and *Traits & notes*.
 - Text import reads the bot's own text format (section 6) from a paste or a `.txt` file. It does
   not read PDFs, Word files or images of character sheets.
-- Not included on purpose: dice rolling, XP/advancement, wounds, corruption, fate, influence,
-  psychic powers, more than one character per member per server.
+- `imbot/rolls.py` is a copy of the stand-alone dice bot's `rolls.py`, and `/character roll` names
+  its modifiers like that bot's `/im_test`. Copy the file again after changing the rules there.
+- Not included on purpose: XP/advancement, wounds, corruption, fate, influence, psychic powers,
+  more than one character per member per server.
