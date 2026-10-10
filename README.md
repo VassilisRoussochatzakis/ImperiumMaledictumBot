@@ -203,6 +203,93 @@ Ration packs | 6
   Anyone can export any character, because anyone can view it.
 - Line breaks inside an entry's notes become spaces.
 
+#### A complete character (template)
+
+Every section filled in, to copy and rewrite as your own: a two-line description, all twenty
+skills with specialisations and notes, talents, melee, pistol, long gun, heavy and thrown weapons,
+armour, a shield and other gear. It is 3,996 characters, just under the paste box's limit. Origin,
+faction and role go in the description; a weapon's specialisation, Test and Enc. go in its
+*Traits & notes*. Names, numbers and effects are examples, not rulebook values.
+
+```
+Name: Vex Harrow
+Description: A disgraced Administratum clerk, now an agent of the Inquisition. Origin: Hive World. Faction: Adeptus Administratum. Role: Savant.
+Patron: Inquisitor Leandra Voss of the Ordo Hereticus, who keeps Vex's old crimes in a locked drawer. Grey robes, ink-stained fingers, an augmetic left eye and a laspistol under the ledger. Hates loose ends and unfiled reports.
+
+CHARACTERISTICS
+WS 30, BS 42, Str 28, Tgh 35, Ag 40, Int 48, Per 38, Wil 33, Fel 31
+
+SKILLS (Skill Total (Specialisation Total, ...) | Notes)
+Athletics 28
+Awareness 43 (Sight 48) | Augmetic eye: no penalty in darkness.
+Dexterity 45
+Discipline 38 (Fear 43) | Has seen worse in the archives.
+Fortitude 35
+Intuition 43
+Linguistics 58 (High Gothic 63) | Also reads Administratum shorthand.
+Logic 58 (Investigation 63)
+Lore 58 (Adeptus Administratum 63, Academics 63) | Knows the forms, and which ones go missing.
+Medicae 48 | Field dressings only; no surgery.
+Melee 35 (One-Handed 40)
+Navigation 48
+Piloting 40 | Groundcars, badly.
+Presence 33
+Psychic Mastery | Not a psyker, thank the Throne.
+Ranged 47 (Pistol 57, Long Gun 52, Thrown 52)
+Rapport 36
+Reflexes 45 (Dodge 50)
+Stealth 45 (Hide 50)
+Tech 53 | Cogitators answer her; servitors ignore her.
+
+TALENTS (Talent | Effect)
+Bureaucratic Insight | Re-roll one Lore test per session.
+Eidetic Memory | Recalls any document she has read, word for word. No Test for files she archived herself.
+Hatred (Heretics) | +1 SL on attacks against declared heretics; a Discipline Test to show one mercy.
+Unremarkable | People forget her face. Advantage on Stealth (Hide) Tests in crowds and offices.
+Forbidden Knowledge | May make Lore Tests about the warp and heresy. Failing by 3+ SL costs 1 Corruption.
+Ambidextrous | No penalty for using her off hand.
+Rapid Reload | Reloads a pistol as a free action once per round.
+
+WEAPONS (Name | Damage | Range | Mag. | Traits & notes)
+Laspistol | 6 | Medium | 15 | Reliable. Ranged (Pistol), Test 57, Enc 0. Her old office issue.
+Shotgun | 9 | Short | 8 | Spread, Loud. Ranged (Long Gun), Test 52, Enc 2.
+Hand flamer | 8 | Short | 3 | Close, Flamer, Inflict (Ablaze). Ranged (Pistol), Test 57, Enc 1.
+Heavy stubber | 10 | Long | 60 | Heavy (2), Rapid Fire (4), Loud. Ranged (Ordnance), Test 47, Enc 3. Mounted on the groundcar.
+Frag grenade | 8 | Short | - | Blast (3), Loud. Ranged (Thrown), Test 52. 3 carried.
+Krak grenade | 12 | Short | - | Penetrating (4). Ranged (Thrown), Test 52. 1 carried, for doors.
+Chainsword | 9 | Melee | - | Rend (1), Loud. Melee (One-Handed), Test 40, Enc 1.
+Shock stave | 7 | Melee | - | Two-handed, Inflict (Stunned). Melee (Two-Handed), Test 35, Enc 2.
+Combat knife | 5 | Melee | - | Subtle. Melee (One-Handed), Test 40, Enc 0. In her left boot.
+Knuckle-duster | 3 | Melee | - | Subtle. Melee (Brawling), Test 35. For interviews.
+
+ARMOUR (Name | Locations | Armour | Enc. | Traits & notes)
+Flak Coat | Body, Arms | 3 | 1 | Flak. Worn under the robes.
+Flak Helmet | Head | 3 | 0 | Flak. Clipped to her belt until the shooting starts.
+Carapace Greaves | Left Leg, Right Leg | 5 | 1 | Carapace, Bulky. Taken from a dead Arbitrator.
+Suppression shield | Left Arm | 4 | 2 | Shield, Bulky. Only taken on raids.
+
+OTHER EQUIPMENT (Name | Quantity | Notes)
+Solars | 120 | Last month's pay.
+Ration packs | 6
+Charge pack | 3 | Laspistol, 15 shots each.
+Shotgun shells | 24
+Promethium canister | 2 | Refills the hand flamer.
+Augmetic eye | 1 | Left eye. Sees in the dark; whirrs when she lies.
+Dataslate | 1 | Encrypted. Holds the case files she should not have.
+Auspex | 1 | Short-range scanner.
+Vox-bead | 1 | Tuned to the warband channel.
+Magnoculars | 1
+Rebreather | 1
+Medikit | 1 | Two uses left.
+Glow-globe | 1
+Auto-quill and parchment | 1 | For forms in triplicate.
+Writ of passage | 1 | Signed by Voss. Gets her past Arbites cordons.
+Grapnel and line | 1 | 30 metres of cable.
+Forged Administratum seal | 1 | Opens doors that should stay shut.
+Aquila pendant | 1
+Lho-sticks | 20 | Bribes, mostly.
+```
+
 ### Roll a Test
 
 ```
