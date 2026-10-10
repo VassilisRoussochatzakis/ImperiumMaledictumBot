@@ -648,6 +648,20 @@ def test_dead_card_buttons_get_a_private_explanation(card_user_store):
     run(scenario())
 
 
+def test_a_click_that_stops_its_card_is_answered_once(card_user_store):
+    async def scenario():
+        i = await paste("SKILLS\nStealth 40")
+        preview = i.view
+        cancel = Fake(User(OWNER), message=object(), custom_id=f"imc:{preview.token}:cancel")
+        # discord.py runs the card's handler first, then on_interaction for the same click
+        assert await preview.interaction_check(cancel)
+        await button(preview, "Cancel").callback(cancel)
+        await bot.on_interaction(cancel)
+        assert len(cancel.log) == 1 and "Nothing was changed" in cancel.last[1]
+        assert cancel.id not in bot.CLAIMED
+    run(scenario())
+
+
 def test_error_handlers_reply_privately(card_user_store):
     async def scenario():
         i = Fake(User(PLAYER))

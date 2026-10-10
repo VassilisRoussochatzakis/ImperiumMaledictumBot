@@ -81,6 +81,7 @@ class Fake:
 
     def __init__(self, user, guild_id=GUILD, admin=False, message=None, custom_id=None, kind=None):
         self.user, self.guild_id, self.message = user, guild_id, message
+        self.id = id(self)
         self.permissions = Perms(admin)
         self.log: list[tuple] = []
         self.response, self.followup = Response(self.log), Followup(self.log)
