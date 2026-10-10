@@ -206,17 +206,25 @@ Ration packs | 6
 ### Roll a Test
 
 ```
-/character roll skill:Lore notes:Reading the forms
+/character roll skill:Lore notes:Reading the forms test_adjustment:-10 advantage:1
 ```
 
 Start typing in **skill** and pick one of your character's characteristics, skills or
-specialisations from the list; each shows its rating. **notes** is optional. The bot rolls a d100
-against that rating and posts the result **in the channel**, so the whole table sees it:
+specialisations from the list; each shows its rating. Everything else is optional:
+
+| Option | What it does |
+|---|---|
+| **notes** | What the roll is for, shown above the result |
+| **test_adjustment** | The difficulty: added to the rating before rolling, e.g. `20` or `-10` |
+| **advantage** / **disadvantage** | 0 to 10 each; they cancel 1:1. Advantage reverses the dice if that is better, Disadvantage if that is worse, and each one after the first adds (or takes off) 10 |
+| **sl_adjustment** | Added to the SL after rolling, e.g. `1` or `-2`; it can turn a failure into a success or back |
+
+The bot rolls a d100 and posts the result **in the channel**, so the whole table sees it:
 
 > **Test:** Reading the forms
 >
-> **Vex Harrow** rolled: **42** with a target of **58**\
-> **Success** (+1 SL) on **Lore**!
+> **Vex Harrow** rolled: **62**, reversed to **26**, with a target of **48** (skill: **58**, test adjustment: **-10**, Advantage)\
+> **Success** (+2 SL) on **Lore**!
 
 Doubles add **Critical!** or **Fumble!**. Only entries with a rating can be rolled, and only for
 your own character. Typing a name without picking from the list works when it matches exactly one
@@ -378,9 +386,9 @@ the same validation and authorisation; exported text reads back unchanged, messy
 read forgivingly and unreadable lines are reported; an import saves nothing before **Save** and
 respects permissions and staleness; a full paste box is flagged; `.txt` files are accepted and
 other files refused; long sheets and empty sections stay within Discord's limits; rolls use the
-stored rating, are the only public message, and privately refuse names that are unknown, ambiguous
-or unrated; Success Levels follow the rulebook examples; and the command and component payloads
-sent to Discord are within its limits.
+stored rating and every modifier, are the only public message, and privately refuse names that are
+unknown, ambiguous or unrated; Success Levels, Advantage and doubles follow the rulebook examples;
+and the command and component payloads sent to Discord are within its limits.
 
 ### Live acceptance checklist
 
@@ -418,8 +426,10 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
 16. Player B: `/character import member:@PlayerA` is refused. The GM's is allowed.
 17. Player A: `/character roll`, type `lore` in **skill**: the list offers Lore and its
     specialisations with their ratings. Pick one, add notes and send: Player B sees the result in
-    the channel, with Player A's character name and that rating as the target. Player B (no
-    character): `/character roll` gets a private "no character" reply and nothing is posted.
+    the channel, with Player A's character name and that rating as the target. Roll again with
+    `test_adjustment:-20 advantage:1 sl_adjustment:1`: the target is 20 below the rating and the
+    result lists the test adjustment, Advantage and SL adjustment. Player B (no character):
+    `/character roll` gets a private "no character" reply and nothing is posted.
 18. Apart from the roll results in step 17, nobody ever sees a message in the channel or a DM from
     the bot during any of the above.
 
@@ -433,8 +443,7 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
   Armour, Enc. and *Traits & notes*.
 - Text import reads the bot's own text format (section 6) from a paste or a `.txt` file. It does
   not read PDFs, Word files or images of character sheets.
-- `/character roll` uses the stored rating as the target, with no options for difficulty,
-  Advantage/Disadvantage or SL adjustments. `imbot/rolls.py` already supports them: it is a copy
-  of the stand-alone dice bot's `rolls.py`, so copy it again after changing the rules there.
+- `imbot/rolls.py` is a copy of the stand-alone dice bot's `rolls.py`, and `/character roll` names
+  its modifiers like that bot's `/im_test`. Copy the file again after changing the rules there.
 - Not included on purpose: XP/advancement, wounds, corruption, fate, influence, psychic powers,
   more than one character per member per server.

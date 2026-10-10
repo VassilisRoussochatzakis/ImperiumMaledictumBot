@@ -21,15 +21,22 @@ def test_command_tree_serialises():
             if sub["name"] != "roll":
                 assert opt["type"] in (6, 8, 5, 11) and not opt.get("required", False)  # user, role, boolean, attachment
     roll = {o["name"]: o for s in by_name["character"]["options"] if s["name"] == "roll" for o in s["options"]}
+    assert list(roll) == ["skill", "notes", "test_adjustment", "advantage", "disadvantage", "sl_adjustment"]
     assert roll["skill"]["type"] == 3 and roll["skill"]["required"] and roll["skill"]["autocomplete"]
-    assert roll["notes"]["type"] == 3 and not roll["notes"].get("required") and roll["notes"]["max_length"] == bot.ROLL_NOTES_MAX
+    assert roll["notes"]["type"] == 3 and roll["notes"]["max_length"] == bot.ROLL_NOTES_MAX
+    assert all(roll[k]["type"] == 4 for k in ("test_adjustment", "advantage", "disadvantage", "sl_adjustment"))  # integer
+    assert roll["advantage"]["max_value"] == roll["disadvantage"]["max_value"] == bot.MAX_ADVANTAGE
+    assert not any(o.get("required") for name, o in roll.items() if name != "skill")
 
 
 def test_longest_roll_result_fits_one_message():
     wide = "𝔛"  # outside the BMP, so Discord counts it twice
     label = f"{wide * 60} ({wide * 60})"  # longest skill and specialisation names
-    worst = bot.rolls.build_test_result(bot.rolls.Participant(wide * 80, 0, roll=100, skill_name=label), wide * bot.ROLL_NOTES_MAX)
-    assert "Astounding Failure** (-10 SL)" in worst and bot.discord_len(worst) <= bot.MESSAGE_MAX
+    huge = -(2**53 - 1)  # the largest integer Discord sends for an option
+    you = bot.rolls.Participant(wide * 80, 100, test_adjustment=huge, sl_adjustment=huge, disadvantage=bot.MAX_ADVANTAGE,
+                                roll=19, skill_name=label)
+    worst = bot.rolls.build_test_result(you, wide * bot.ROLL_NOTES_MAX)
+    assert "reversed to **91**" in worst and "Disadvantage ×10" in worst and bot.discord_len(worst) <= bot.MESSAGE_MAX
 
 
 def test_card_components_and_embeds_serialise(card_user_store):

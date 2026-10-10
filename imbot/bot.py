@@ -658,7 +658,8 @@ def import_header(owner_id: int, old: dict | None, new: dict, patch: dict, probl
     return "\n".join(lines)[:MESSAGE_MAX]
 
 
-ROLL_NOTES_MAX = 500  # keeps a result with the longest name and skill under MESSAGE_MAX
+ROLL_NOTES_MAX = 500  # keeps a result with the longest name, skill and modifiers under MESSAGE_MAX
+MAX_ADVANTAGE = 10
 
 
 def roll_targets(char: dict) -> list[tuple[str, int]]:
@@ -679,9 +680,15 @@ def find_target(targets: list[tuple[str, int]], text: str) -> tuple[str, int] | 
 
 @character.command(name="roll", description="Roll a Test against your character's characteristic, skill or specialisation.")
 @app_commands.describe(skill="Characteristic, skill or specialisation: start typing, then pick one",
-                       notes="What the roll is for, e.g. Sneaking past the guards")
+                       notes="What the roll is for, e.g. Sneaking past the guards",
+                       test_adjustment="Difficulty: added to your skill before rolling, e.g. 20 or -10",
+                       advantage="Reverse the dice if better; each Advantage after the first adds 10 to your skill",
+                       disadvantage="Reverse the dice if worse; each Disadvantage after the first takes 10 off your skill",
+                       sl_adjustment="Added to your SL after rolling, e.g. 1 or -2")
 async def character_roll(interaction: discord.Interaction, skill: str,
-                         notes: app_commands.Range[str, 1, ROLL_NOTES_MAX] | None = None) -> None:
+                         notes: app_commands.Range[str, 1, ROLL_NOTES_MAX] | None = None, test_adjustment: int = 0,
+                         advantage: app_commands.Range[int, 0, MAX_ADVANTAGE] = 0,
+                         disadvantage: app_commands.Range[int, 0, MAX_ADVANTAGE] = 0, sl_adjustment: int = 0) -> None:
     row = STORE.load(interaction.guild_id, interaction.user.id)
     if row is None:
         await reply(interaction, "You have no character on this server yet. Create one with `/character create`.")
@@ -692,7 +699,9 @@ async def character_roll(interaction: discord.Interaction, skill: str,
                                  "specialisations. Start typing in the **skill** box and pick one from the list.")
         return
     label, rating = target
-    result = rolls.build_test_result(rolls.Participant(row[0]["name"], rating, skill_name=label), notes)
+    you = rolls.Participant(row[0]["name"], rating, test_adjustment=test_adjustment, sl_adjustment=sl_adjustment,
+                            advantage=advantage, disadvantage=disadvantage, skill_name=label)
+    result = rolls.build_test_result(you, notes)
     await interaction.response.send_message(result)  # public on purpose; the client never pings anyone
 
 

@@ -561,11 +561,11 @@ def test_import_explains_text_it_cannot_use(store):
 
 # -- rolls ----------------------------------------------------------------------------------
 
-async def roll(skill, notes=None, user=OWNER):
+async def roll(skill, notes=None, user=OWNER, **modifiers):
     """Run /character roll as ``user``; returns the interaction."""
     i = Fake(User(user))
     i.response.public_ok = True
-    await bot.character_roll.callback(i, skill, notes)
+    await bot.character_roll.callback(i, skill, notes, **modifiers)
     return i
 
 
@@ -585,6 +585,19 @@ def test_roll_offers_and_uses_the_stored_ratings(card_user_store, monkeypatch):
             assert kind == "send_message" and "ephemeral" not in kw  # posted in the channel for the table
             assert content == f"**Test:** Reading the forms\n\n**Vex Harrow** rolled: **42** with a target of **{target}**\n{outcome}"
         assert "Test:" not in (await roll("Awareness")).last[1]  # notes are optional
+    run(scenario())
+
+
+def test_roll_modifiers_reach_the_dice(card_user_store, monkeypatch):
+    monkeypatch.setattr(bot.rolls.random, "randint", lambda a, b: 62)
+    async def scenario():
+        i = await roll("Lore", "Reading the forms", test_adjustment=20, advantage=2, sl_adjustment=-1)
+        assert i.last[1] == ("**Test:** Reading the forms\n\n**Vex Harrow** rolled: **62**, reversed to **26**, with a target of "
+                             "**88** (skill: **58**, test adjustment: **+20**, Advantage ×2: **+10**, SL adjustment: **-1**)"
+                             "\n**Astounding Success** (+5 SL) on **Lore**!")
+        i2 = await roll("Lore", advantage=1, disadvantage=3)  # cancel 1:1, leaving Disadvantage ×2
+        assert i2.last[1] == ("\n**Vex Harrow** rolled: **62** with a target of **48** (skill: **58**, Disadvantage ×2: **-10**)"
+                              "\n**Failure** (-2 SL) on **Lore**!")
     run(scenario())
 
 
