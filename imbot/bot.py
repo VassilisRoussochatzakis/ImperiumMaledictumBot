@@ -5,8 +5,10 @@ ephemeral card, so nothing is ever posted to a channel or sent as a DM.
 """
 from __future__ import annotations
 
+import io
 import logging
 import os
+import re
 import secrets
 import sys
 from functools import partial
@@ -15,7 +17,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
-from . import model, render
+from . import model, render, textsheet
 from .store import Actor, PermissionDenied, StaleEdit, Store
 
 log = logging.getLogger("imbot")
@@ -25,6 +27,11 @@ FORM_TIMEOUT = 30 * 60  # an abandoned form is forgotten after this; a later sub
 REOPEN_HINT = "Reopen it with **Apps → View Character** on a member, or `/character view`."
 GENERIC_ERROR = "Something went wrong on our side. Nothing was changed. Please try again."
 NOT_IN_GUILD = "This bot only works inside a server."
+PASTE_MAX = 4000              # Discord's limit for one text box in a form
+MESSAGE_MAX = 2000            # Discord's limit for a message's text
+IMPORT_MAX_BYTES = 200_000    # a real character is a few KB; keeps a huge upload out of memory
+IMPORT_FIELD = model.Field("text", "Character text", PASTE_MAX, "long", required=True,
+                           hint=f"Up to {PASTE_MAX} characters. Longer? Run /character import and attach a .txt file.")
 
 LIVE_CARDS: set[str] = set()   # tokens of cards whose buttons still work (see on_interaction)
 STORE: Store = None  # type: ignore[assignment]  # set by main() or by tests
@@ -42,6 +49,11 @@ async def reply(interaction: discord.Interaction, content: str | None = None, **
         await interaction.followup.send(content, ephemeral=True, **kwargs)
     else:
         await interaction.response.send_message(content, ephemeral=True, **kwargs)
+
+
+def discord_len(text: str) -> int:
+    """Length as Discord clients count it (UTF-16 code units: an emoji counts twice)."""
+    return len(text.encode("utf-16-le")) // 2
 
 
 def actor_from(interaction: discord.Interaction) -> Actor:
@@ -103,12 +115,15 @@ class Form(discord.ui.Modal):
 class Card(discord.ui.View):
     """One private, interactive character card bound to the member who opened it."""
 
+    expired = f"⌛ This card expired after {CARD_TIMEOUT // 60} minutes without activity. {REOPEN_HINT}"
+
     def __init__(self, viewer_id: int, guild_id: int, owner_id: int, section: str = "characteristics", editing: bool = False):
         super().__init__(timeout=CARD_TIMEOUT)
         self.token = secrets.token_hex(4)
         self.viewer_id, self.guild_id, self.owner_id = viewer_id, guild_id, owner_id
         self.section, self.page, self.editing = section, 0, editing
         self.notice = ""
+        self.header: str | None = None  # message text above the card, kept while navigating (import previews)
         self.pending_remove: tuple[str, int, str] | None = None
         self.last_interaction: discord.Interaction | None = None
         self.char: dict | None = None
@@ -140,10 +155,7 @@ class Card(discord.ui.View):
             item.disabled = True
         if self.last_interaction is not None and not self.last_interaction.is_expired():
             try:
-                await self.last_interaction.edit_original_response(
-                    content=f"⌛ This card expired after {CARD_TIMEOUT // 60} minutes without activity. {REOPEN_HINT}",
-                    view=self,
-                )
+                await self.last_interaction.edit_original_response(content=self.expired, view=self)
             except discord.HTTPException:
                 pass  # token already gone; clicks then get the on_interaction "expired" reply
 
@@ -227,9 +239,9 @@ class Card(discord.ui.View):
         embed = self.embed()
         self.notice = ""
         if interaction.message is not None:  # button, select or form launched from this card
-            await interaction.response.edit_message(content=None, embed=embed, view=self)
+            await interaction.response.edit_message(content=self.header, embed=embed, view=self)
         else:  # slash command or context menu: a fresh private card
-            await reply(interaction, embed=embed, view=self)
+            await reply(interaction, self.header, embed=embed, view=self)
 
     # -- navigation ------------------------------------------------------------------------
     async def go_section(self, section: str, interaction: discord.Interaction) -> None:
@@ -362,6 +374,51 @@ class Card(discord.ui.View):
         await self.show(interaction)
 
 
+class Preview(Card):
+    """A read-only card of imported text. Nothing is stored until the viewer presses Save."""
+
+    expired = "⌛ This preview expired, so nothing was imported. Run `/character import` again."
+
+    def __init__(self, viewer_id: int, guild_id: int, owner_id: int, char: dict, patch: dict, version: int, header: str):
+        super().__init__(viewer_id, guild_id, owner_id)
+        self.char, self.patch, self.version, self.header = char, patch, version, header
+
+    def refresh(self, actor: Actor) -> None:  # always the draft, never editable
+        self.pages = render.pages(self.char, self.section)
+        self.page = min(self.page, len(self.pages) - 1)
+
+    def build(self) -> None:
+        super().build()
+        for key, label, style, handler in (("save", "Save", discord.ButtonStyle.success, self.save),
+                                           ("cancel", "Cancel", discord.ButtonStyle.secondary, self.cancel)):
+            self.add_item(Btn(handler, label=label, style=style, row=2, custom_id=f"imc:{self.token}:{key}",
+                              disabled=self.is_finished()))
+
+    async def save(self, interaction: discord.Interaction) -> None:
+        """Same permission and staleness checks as every form: refused if anyone saved since the preview."""
+        self.stop()
+        actor = actor_from(interaction)
+        try:
+            STORE.save(actor, self.owner_id, self.patch, expected_version=self.version)
+        except PermissionDenied:
+            text = "⛔ You no longer have permission to edit this character. Nothing was imported."
+        except StaleEdit:
+            text = "⚠️ This character was changed by someone else after you started. Nothing was imported; run `/character import` again."
+        except model.ValidationError as e:
+            text = f"⚠️ Nothing was imported: {e}"
+        else:
+            log.info("imported character guild=%s owner=%s by=%s keys=%s", self.guild_id, self.owner_id, actor.user_id, sorted(self.patch))
+            card = Card(self.viewer_id, self.guild_id, self.owner_id)
+            card.notice = "✅ Imported."
+            await card.show(interaction)
+            return
+        await interaction.response.edit_message(content=text, embed=None, view=None)
+
+    async def cancel(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(content="Import cancelled. Nothing was changed.", embed=None, view=None)
+
+
 class ConfirmDelete(discord.ui.View):
     """Two-button confirmation, bound to the viewer, expiring quickly."""
 
@@ -486,6 +543,120 @@ async def character_delete(interaction: discord.Interaction, member: discord.Mem
                 view=ConfirmDelete(interaction, owner.id))
 
 
+@character.command(name="export", description="Get a character as text to copy, edit and import again. Only you will see it.")
+@app_commands.describe(member="Whose character (default: yours)")
+async def character_export(interaction: discord.Interaction, member: discord.Member | discord.User | None = None) -> None:
+    if interaction.guild_id is None:
+        await reply(interaction, NOT_IN_GUILD)
+        return
+    owner = member or interaction.user
+    row = STORE.load(interaction.guild_id, owner.id)
+    char = row[0] if row else None
+    text = textsheet.format_text(char)
+    target = "`/character import`" if owner.id == interaction.user.id else f"`/character import` with **member** set to <@{owner.id}>"
+    if char is None:
+        intro = (f"<@{owner.id}> has no character yet, so here is a blank template. Fill it in and paste it into "
+                 f"{target}: one entry per line, columns separated by `|`, for example "
+                 "`Ranged 45 (Pistols 50)` or `Laspistol | 4 | Medium | 15 | Reliable`.")
+    else:
+        intro = (f"**{char['name']}** as text. Copy it, change what you like and paste it into {target}. "
+                 "Sections you leave out stay as they are.")
+    message = f"{intro}\n```\n{text}\n```"
+    if discord_len(message) <= MESSAGE_MAX and "```" not in text:
+        await reply(interaction, message)
+        return
+    intro += " It is too long for one message, so here it is as a file."
+    if discord_len(text) > PASTE_MAX:
+        intro += (f"\n⚠️ It is over the {PASTE_MAX} characters the paste box takes. To import it, attach the edited "
+                  "file to `/character import`, or paste one section at a time.")
+    filename = re.sub(r"[^\w-]+", "_", char["name"] if char else "").strip("_") or "character"
+    await reply(interaction, intro, file=discord.File(io.BytesIO(text.encode("utf-8")), filename=f"{filename}.txt"))
+
+
+@character.command(name="import", description="Create or update a character from text: paste it, or attach a .txt file.")
+@app_commands.describe(member="Whose character (default: yours; GMs and admins may import for others)",
+                       file=f"A .txt file instead of pasting, for text over {PASTE_MAX} characters")
+async def character_import(interaction: discord.Interaction, member: discord.Member | discord.User | None = None,
+                           file: discord.Attachment | None = None) -> None:
+    if interaction.guild_id is None:
+        await reply(interaction, NOT_IN_GUILD)
+        return
+    owner = member or interaction.user
+    if not STORE.can_edit(actor_from(interaction), owner.id):
+        await reply(interaction, "⛔ Only the member, server administrators or the GM role can import this character.")
+        return
+    if file is None:
+        async def done(i: discord.Interaction, raw: dict) -> None:
+            await preview_import(i, owner.id, raw["text"], pasted=True)
+
+        await interaction.response.send_modal(Form("Import character", [IMPORT_FIELD], {}, done))
+        return
+    if not (file.filename.lower().endswith(".txt") or (file.content_type or "").startswith("text/")):
+        await reply(interaction, "⚠️ Please attach a plain text (.txt) file, or run `/character import` without a file and paste the text.")
+        return
+    if file.size > IMPORT_MAX_BYTES:
+        await reply(interaction, f"⚠️ That file is too big ({file.size // 1000} KB). A character's text is only a few KB.")
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)  # the download may outlast Discord's 3-second reply window
+    data = await file.read()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("cp1252", errors="replace")  # older Windows Notepad default
+    await preview_import(interaction, owner.id, text)
+
+
+NOTHING_TO_IMPORT = ("⚠️ Nothing was imported: the text has no `Name:` line and no headings such as SKILLS or TALENTS. "
+                     "Run `/character export` to get a template to fill in.")
+
+
+async def preview_import(interaction: discord.Interaction, owner_id: int, text: str, pasted: bool = False) -> None:
+    """Read ``text`` and show the result as a preview card. Nothing is stored until Save."""
+    row = STORE.load(interaction.guild_id, owner_id)
+    current, version = row if row else (None, 0)
+    patch, problems = textsheet.parse_text(text)
+    if not patch:
+        await reply(interaction, NOTHING_TO_IMPORT)
+        return
+    if current is None and not patch.get("name"):
+        await reply(interaction, "⚠️ Nothing was imported: a new character needs a name. Add a line like `Name: Vex Harrow`.")
+        return
+    try:
+        char = model.apply_patch(current, patch)
+    except model.ValidationError as e:
+        await reply(interaction, f"⚠️ Nothing was imported: {e}")
+        return
+    cut_off = pasted and discord_len(text) >= PASTE_MAX  # the box was full, so the client may have dropped the rest
+    log.info("import preview guild=%s owner=%s by=%s problems=%d", interaction.guild_id, owner_id, interaction.user.id, len(problems))
+    header = import_header(owner_id, current, char, patch, problems, cut_off)
+    await Preview(interaction.user.id, interaction.guild_id, owner_id, char, patch, version, header).show(interaction)
+
+
+def import_header(owner_id: int, old: dict | None, new: dict, patch: dict, problems: list[str], cut_off: bool) -> str:
+    """The text above an import preview: whose character, what the text changes, what it keeps, what could not be read."""
+    lines = [(f"📝 **Preview of the character of <@{owner_id}>: nothing is saved yet.** "
+              "Look through the sections, then press **Save** or **Cancel**.")]
+    if cut_off:
+        lines.append(f"⚠️ **Your text filled the whole {PASTE_MAX}-character box, so its end may be cut off.** Check the "
+                     "last section. For longer text, attach a .txt file to `/character import` instead.")
+    if old is not None:
+        parts = {"name": "name", "description": "description",
+                 **{k: textsheet.TITLES[k].lower() for k in ("characteristics", *model.LIST_KEYS)}}
+        for k in model.LIST_KEYS:
+            if k in patch:
+                parts[k] += f" ({len(new[k])}" + (f", was {len(old[k])})" if len(old[k]) != len(new[k]) else ")")
+        lines.append("From your text: " + ", ".join(v for k, v in parts.items() if k in patch) + ".")
+        kept = [v for k, v in parts.items() if k not in patch]
+        if kept:
+            lines.append("Not in your text, so kept as they are: " + ", ".join(kept) + ".")
+    if problems:
+        lines.append(f"⚠️ Skipped {len(problems)} line(s) that could not be read:")
+        lines += [f"• {p}" for p in problems[:8]]
+        if len(problems) > 8:
+            lines.append(f"…and {len(problems) - 8} more.")
+    return "\n".join(lines)[:MESSAGE_MAX]
+
+
 tree.add_command(character)
 
 setup = app_commands.Group(name="setup", description="Bot setup (server administrators only)",
@@ -537,7 +708,7 @@ async def on_interaction(interaction: discord.Interaction) -> None:
         return
     custom_id = (interaction.data or {}).get("custom_id", "")
     if custom_id.startswith("imc:") and custom_id.split(":")[1] not in LIVE_CARDS:
-        await reply(interaction, f"⌛ This card has expired. {REOPEN_HINT}")
+        await reply(interaction, Preview.expired if custom_id.endswith(":save") else f"⌛ This card has expired. {REOPEN_HINT}")
 
 
 @client.event

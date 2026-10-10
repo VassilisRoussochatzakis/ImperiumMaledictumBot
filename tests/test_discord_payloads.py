@@ -17,7 +17,8 @@ def test_command_tree_serialises():
     for sub in by_name["character"]["options"]:
         assert sub["type"] == 1 and 1 <= len(sub["description"]) <= 100
         for opt in sub.get("options", []):
-            assert opt["type"] in (6, 8, 5) and not opt.get("required", False)  # user, role, boolean
+            assert opt["type"] in (6, 8, 5, 11) and not opt.get("required", False)  # user, role, boolean, attachment
+            assert 1 <= len(opt["description"]) <= 100
 
 
 def test_card_components_and_embeds_serialise(card_user_store):
@@ -39,6 +40,7 @@ def test_forms_serialise_within_modal_limits():
     values = {"name": "x", "quantity": 3, "specialisations": [{"name": "a", "rating": 1}]}
     forms = [bot.Form("Identity", model.IDENTITY, values, noop)]
     forms += [bot.Form(f"Edit {k}", fields, values, noop) for k, (_, fields) in model.LIST_SPECS.items()]
+    forms.append(bot.Form("Import character", [bot.IMPORT_FIELD], {}, noop))
     forms.append(bot.Form("Characteristics " * 5, [model.Field(a, f"{f} ({a})", 3, "int") for a, f in model.CHARACTERISTICS[:5]], {}, noop))
     for form in forms:
         d = form.to_dict()

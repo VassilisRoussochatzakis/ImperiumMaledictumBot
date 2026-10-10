@@ -1,7 +1,7 @@
 """SQLite persistence, permissions and the single save entry point.
 
 Nothing in this module knows about Discord UI objects. Interactive editing
-(bot.py) and any future importer both go through :meth:`Store.save`.
+and the text import (bot.py) both go through :meth:`Store.save`.
 """
 from __future__ import annotations
 

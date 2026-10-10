@@ -4,7 +4,7 @@ from pathlib import Path
 
 import discord
 
-from imbot import bot, model
+from imbot import bot, model, textsheet
 from tests.conftest import (ADMIN, GM, GM_ROLE, GUILD, OTHER_GUILD, OWNER, PLAYER, Fake, User, actor, button, choose,
                             click, labels, open_card, run, submit)
 
@@ -17,7 +17,8 @@ def test_all_sends_go_through_reply_and_are_ephemeral():
     assert body.count("ephemeral=True") == 2  # both the first response and the follow-up branch
     outside = src.replace(body, "")
     assert "send_message(" not in outside and "followup.send(" not in outside and ".send(" not in outside
-    assert "defer(" not in src  # no deferrals at all, so none can be public
+    defers = re.findall(r"defer\((.*?)\)", src)
+    assert defers and all("ephemeral=True" in d for d in defers)  # only private "thinking…" placeholders
     assert ".channel.send(" not in src and "dm_channel" not in src and "create_dm" not in src
 
 
@@ -38,7 +39,7 @@ def test_context_menu_is_a_user_command_and_commands_are_guild_only():
     assert menu is not None and menu.type is discord.AppCommandType.user and menu.guild_only
     assert bot.tree.get_command("character").guild_only and bot.tree.get_command("setup").guild_only
     assert bot.tree.get_command("setup").default_permissions.administrator
-    assert {c.name for c in bot.tree.get_command("character").commands} == {"view", "edit", "create", "delete"}
+    assert {c.name for c in bot.tree.get_command("character").commands} == {"view", "edit", "create", "delete", "export", "import"}
     assert not bot.intents.members and not bot.intents.message_content
 
 
@@ -311,6 +312,7 @@ def test_tampered_select_values_are_rejected(card_user_store):
                 assert i.last[0] == "edit_message" and "no longer exists" in i.embed.description
                 assert card.pending_remove is None
         assert card_user_store.load(GUILD, OWNER)[1] == 1
+    run(scenario())
 
 
 def test_custom_ids_are_stable_per_action(card_user_store):
@@ -407,6 +409,154 @@ def test_setup_gm_role(store):
     run(scenario())
 
 
+# -- text export & import --------------------------------------------------------------------
+
+class Attachment:
+    """A duck-typed discord.Attachment."""
+
+    def __init__(self, data: bytes, filename="vex.txt", content_type="text/plain; charset=utf-8"):
+        self.data, self.filename, self.content_type, self.size = data, filename, content_type, len(data)
+
+    async def read(self):
+        return self.data
+
+
+async def paste(text, user=None, owner=None):
+    """Run /character import, fill the form with ``text`` and submit it; returns the submit interaction."""
+    user = user or User(OWNER)
+    i = Fake(user)
+    await bot.character_import.callback(i, owner, None)
+    assert i.last[0] == "send_modal"
+    return await submit(i.last[1], {"text": text}, user, from_message=False)
+
+
+def test_export_command(card_user_store):
+    async def scenario():
+        i = Fake(User(PLAYER))  # anyone may export a character they can view
+        await bot.character_export.callback(i, User(OWNER))
+        kind, content, kw = i.last
+        assert kind == "send_message" and kw["ephemeral"] is True and "file" not in kw
+        assert "```\nName: Vex Harrow\n" in content and "Laspistol | 6 | Medium | 15 | Reliable" in content
+        assert f"with **member** set to <@{OWNER}>" in content  # so nobody imports it over their own character
+        i2 = Fake(User(PLAYER))
+        await bot.character_export.callback(i2, None)  # PLAYER has no character: blank template
+        assert "has no character yet" in i2.last[1] and "Name: \n" in i2.last[1]
+        for talents, over_box in ((6, False), (15, True)):  # too long for a message, then too long for the paste box
+            card_user_store.save(actor(OWNER), OWNER, {"talents": [{"name": f"Talent {n}", "notes": "x" * 300} for n in range(talents)]})
+            i3 = Fake(User(OWNER))
+            await bot.character_export.callback(i3, None)
+            content, kw = i3.last[1], i3.last[2]
+            assert kw["file"].filename == "Vex_Harrow.txt" and "as a file" in content
+            assert ("over the 4000 characters" in content) is over_box
+            text = kw["file"].fp.read().decode("utf-8")
+            assert len(textsheet.parse_text(text)[0]["talents"]) == talents
+    run(scenario())
+
+
+def test_import_by_pasting_previews_then_saves(card_user_store):
+    async def scenario():
+        i = Fake(User(OWNER))
+        await bot.character_import.callback(i, None, None)
+        modal = i.last[1]
+        assert modal.inputs["text"].max_length == bot.PASTE_MAX and "Up to 4000 characters" in modal.children[0].description
+        text = textsheet.format_text(card_user_store.load(GUILD, OWNER)[0]).replace("BS 42", "BS 45")
+        text = text.replace("(Talent | Effect)\n", "(Talent | Effect)\nSharpshooter | Ignore range penalties.\n")
+        i2 = await submit(modal, {"text": text}, User(OWNER), from_message=False)
+        kind, header, kw = i2.last
+        preview = kw["view"]
+        assert kind == "send_message" and kw["ephemeral"] is True and isinstance(preview, bot.Preview)
+        assert "nothing is saved yet" in header and "talents (2, was 1)" in header and "Skipped" not in header
+        assert "**BS** Ballistic Skill: 45" in kw["embed"].description and "Edit" not in labels(preview)
+        assert card_user_store.load(GUILD, OWNER)[1] == 1  # nothing stored yet
+        i3 = await click(preview, "Talents", User(OWNER))
+        assert i3.last[1] == header and "Sharpshooter" in i3.embed.description  # the summary stays while browsing
+        assert all(len(row["components"]) <= 5 for row in preview.to_components())
+        i4 = await click(preview, "Save", User(OWNER))
+        char, version = card_user_store.load(GUILD, OWNER)
+        assert version == 2 and char["characteristics"]["BS"] == 45 and char["talents"][0]["name"] == "Sharpshooter"
+        assert i4.last[0] == "edit_message" and i4.last[1] is None and "Imported" in i4.embed.description
+        assert type(i4.view) is bot.Card and "Edit" in labels(i4.view)  # now the real, live card
+        assert preview.token not in bot.LIVE_CARDS and i4.view.token in bot.LIVE_CARDS
+    run(scenario())
+
+
+def test_import_summarises_skips_bad_lines_and_can_be_cancelled(card_user_store):
+    async def scenario():
+        i = await paste("SKILLS\nStealth 40\nRanged 152\nTALENTS")
+        header, preview = i.last[1], i.view
+        assert "Skipped 1 line(s)" in header and "• Line 3 `Ranged 152`: Total must be between 0 and 100." in header
+        assert "From your text: skills (1, was 2), talents (0, was 1)." in header
+        assert "kept as they are: name, description, characteristics, weapons, armour, other equipment." in header
+        i2 = await click(preview, "Cancel", User(OWNER))
+        assert i2.last[0] == "edit_message" and "Nothing was changed" in i2.last[1] and i2.last[2]["view"] is None
+        assert card_user_store.load(GUILD, OWNER)[1] == 1 and preview.token not in bot.LIVE_CARDS
+        i3 = await paste("TALENTS\n" + "\n".join(f"{n} | " + "x" * 2000 for n in range(50)))  # 50 unreadable lines
+        assert len(i3.last[1]) <= 2000 and "…and 42 more." in i3.last[1]
+        await i3.view.on_timeout()
+        assert i3.last[0] == "edit_original" and "nothing was imported" in i3.last[1]
+        assert all(item.disabled for item in i3.view.children)
+    run(scenario())
+
+
+def test_import_permissions_and_stale_preview(card_user_store):
+    async def scenario():
+        i = Fake(User(PLAYER))
+        await bot.character_import.callback(i, User(OWNER), None)
+        assert i.last[0] == "send_message" and "⛔" in i.last[1]  # no form for someone who may not edit
+        i2 = Fake(User(PLAYER))
+        await bot.character_import.callback(i2, User(OWNER), Attachment(b"Name: Taken"))
+        assert "⛔" in i2.last[1] and i2.log[0][0] == "send_message"  # refused before downloading anything
+        gm = User(GM, roles=[GM_ROLE])
+        i3 = await paste("Name: Renamed by import", gm, User(OWNER))
+        card_user_store.save(actor(OWNER), OWNER, {"description": "edited meanwhile"})
+        i4 = await click(i3.view, "Save", gm)
+        assert "changed by someone else" in i4.last[1] and card_user_store.load(GUILD, OWNER)[0]["name"] == "Vex Harrow"
+        i5 = await paste("Name: Renamed by import", gm, User(OWNER))
+        i6 = await click(i5.view, "Save", User(GM, roles=[]))  # lost the GM role before pressing Save
+        assert "no longer have permission" in i6.last[1] and card_user_store.load(GUILD, OWNER)[0]["name"] == "Vex Harrow"
+    run(scenario())
+
+
+def test_import_from_a_txt_file(store):
+    async def scenario():
+        text = "Name: Ysolde\r\nTALENTS\r\nField Medic | Heal without a medikit — at a penalty."
+        i = Fake(User(OWNER))
+        await bot.character_import.callback(i, None, Attachment(text.encode("utf-8-sig")))
+        assert i.log[0][0] == "defer" and i.last[0] == "followup" and isinstance(i.view, bot.Preview)
+        assert "cut off" not in i.last[1]
+        await click(i.view, "Save", User(OWNER))
+        assert store.load(GUILD, OWNER)[0]["talents"][0]["notes"] == "Heal without a medikit — at a penalty."
+        i2 = Fake(User(OWNER))
+        await bot.character_import.callback(i2, None, Attachment("Name: Zoë".encode("cp1252")))  # old Notepad files
+        assert i2.view.char["name"] == "Zoë"
+        i3 = Fake(User(OWNER))
+        await bot.character_import.callback(i3, None, Attachment(b"%PDF-1.7", "sheet.pdf", "application/pdf"))
+        assert i3.log[0][0] == "send_message" and ".txt" in i3.last[1]
+        i4 = Fake(User(OWNER))
+        await bot.character_import.callback(i4, None, Attachment(b"x" * (bot.IMPORT_MAX_BYTES + 1)))
+        assert i4.log[0][0] == "send_message" and "too big" in i4.last[1]
+    run(scenario())
+
+
+def test_a_full_paste_box_is_flagged(card_user_store):
+    async def scenario():
+        start = "TALENTS\nSharpshooter | Ignore range penalties 🙂"  # Discord counts the emoji as two characters
+        for size, flagged in ((bot.PASTE_MAX, True), (bot.PASTE_MAX - 1, False)):
+            i = await paste(start + "\n" * (size - bot.discord_len(start)))
+            assert ("may be cut off" in i.last[1]) is flagged and isinstance(i.view, bot.Preview)
+    run(scenario())
+
+
+def test_import_explains_text_it_cannot_use(store):
+    async def scenario():
+        for text, expected in (("hello there", "no `Name:` line"), ("TALENTS\nSharpshooter", "needs a name"),
+                               ("Name: " + "x" * 81, "too long")):
+            i = await paste(text)
+            assert i.last[0] == "send_message" and expected in i.last[1] and i.view is None
+        assert store.load(GUILD, OWNER) is None
+    run(scenario())
+
+
 # -- expiry ---------------------------------------------------------------------------------
 
 def test_timeout_disables_controls_and_explains(card_user_store):
@@ -434,6 +584,9 @@ def test_dead_card_buttons_get_a_private_explanation(card_user_store):
         dead = Fake(User(PLAYER), message=object(), custom_id="imc:deadbeef:1")
         await bot.on_interaction(dead)
         assert dead.last[0] == "send_message" and "expired" in dead.last[1] and dead.last[2]["ephemeral"] is True
+        dead_save = Fake(User(PLAYER), message=object(), custom_id="imc:deadbeef:save")  # an import preview from before a restart
+        await bot.on_interaction(dead_save)
+        assert "nothing was imported" in dead_save.last[1]
         unrelated = Fake(User(PLAYER), message=object(), custom_id="someone-elses-button")
         await bot.on_interaction(unrelated)
         assert unrelated.log == []
