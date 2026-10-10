@@ -35,6 +35,7 @@ IMPORT_FIELD = model.Field("text", "Character text", PASTE_MAX, "long", required
                            hint=f"Up to {PASTE_MAX} characters. Longer? Run /character import and attach a .txt file.")
 
 LIVE_CARDS: set[str] = set()   # tokens of cards whose buttons still work (see on_interaction)
+CLAIMED: set[int] = set()      # ids of clicks a live card answers, so on_interaction never answers them too
 STORE: Store = None  # type: ignore[assignment]  # set by main() or by tests
 
 intents = discord.Intents(guilds=True)  # role cache only; no privileged intents
@@ -134,6 +135,7 @@ class Card(discord.ui.View):
 
     # -- lifecycle ------------------------------------------------------------------------
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        CLAIMED.add(interaction.id)  # answered below either way
         if interaction.user.id == self.viewer_id and interaction.guild_id == self.guild_id:
             return True
         await reply(interaction, f"This card was opened by someone else. {REOPEN_HINT}")
@@ -433,7 +435,10 @@ class ConfirmDelete(discord.ui.View):
         self.add_item(Btn(self.cancel, label="Cancel", custom_id=f"imc:{self.token}:cancel"))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.viewer_id and interaction.guild_id == self.guild_id
+        ok = interaction.user.id == self.viewer_id and interaction.guild_id == self.guild_id
+        if ok:
+            CLAIMED.add(interaction.id)
+        return ok
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
         log.exception("delete confirm error guild=%s viewer=%s", self.guild_id, self.viewer_id, exc_info=error)
@@ -762,6 +767,11 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def on_interaction(interaction: discord.Interaction) -> None:
     """Buttons of cards that died (bot restart, expiry) would otherwise fail silently."""
     if interaction.type is not discord.InteractionType.component:
+        return
+    # The card's handler may already have run and stopped the card (Save, Cancel, Delete), which drops
+    # its token from LIVE_CARDS; CLAIMED tells that apart from a click on a genuinely dead card.
+    if interaction.id in CLAIMED:
+        CLAIMED.discard(interaction.id)
         return
     custom_id = (interaction.data or {}).get("custom_id", "")
     if custom_id.startswith("imc:") and custom_id.split(":")[1] not in LIVE_CARDS:
