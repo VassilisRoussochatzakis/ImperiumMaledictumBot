@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    env_file: .env            # DISCORD_TOKEN and friends; never baked into the image
+    environment:
+      DB_PATH: /data/characters.db
+    volumes:
+      - ./data:/data          # the SQLite database survives rebuilds and restarts
+    restart: unless-stopped

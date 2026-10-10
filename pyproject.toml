@@ -1,0 +1,17 @@
+[project]
+name = "imbot"
+version = "0.1.0"
+description = "Discord bot with private Imperium Maledictum character cards"
+requires-python = ">=3.11"
+dependencies = ["discord.py==2.7.1"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
+[project.scripts]
+imbot = "imbot.bot:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["error::DeprecationWarning:imbot"]
