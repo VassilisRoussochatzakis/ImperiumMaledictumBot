@@ -42,12 +42,14 @@ def _must_be_ephemeral(kind, kw):
 class Response:
     def __init__(self, log):
         self.log, self.done = log, False
+        self.public_ok = False  # set only by tests of the one public message, a roll result
 
     def is_done(self):
         return self.done
 
     async def send_message(self, content=None, **kw):
-        _must_be_ephemeral("send_message", kw)
+        if not self.public_ok:
+            _must_be_ephemeral("send_message", kw)
         self.done = True
         self.log.append(("send_message", content, kw))
 

@@ -1,7 +1,8 @@
 """Discord layer: the "View Character" user command, /character and /setup commands, cards, forms.
 
 Every message leaves through :func:`reply` (always ephemeral) or edits an existing
-ephemeral card, so nothing is ever posted to a channel or sent as a DM.
+ephemeral card, so nothing is ever sent as a DM and the only channel post is the
+result of ``/character roll``, which the table needs to see.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
-from . import model, render, textsheet
+from . import model, render, rolls, textsheet
 from .store import Actor, PermissionDenied, StaleEdit, Store
 
 log = logging.getLogger("imbot")
@@ -44,7 +45,7 @@ tree = app_commands.CommandTree(client)
 # -- helpers -----------------------------------------------------------------------
 
 async def reply(interaction: discord.Interaction, content: str | None = None, **kwargs) -> None:
-    """The single place that creates messages. Always ephemeral, never a channel post or DM."""
+    """The single place that creates messages, apart from roll results. Always ephemeral, never a channel post or DM."""
     if interaction.response.is_done():
         await interaction.followup.send(content, ephemeral=True, **kwargs)
     else:
@@ -655,6 +656,53 @@ def import_header(owner_id: int, old: dict | None, new: dict, patch: dict, probl
         if len(problems) > 8:
             lines.append(f"…and {len(problems) - 8} more.")
     return "\n".join(lines)[:MESSAGE_MAX]
+
+
+ROLL_NOTES_MAX = 500  # keeps a result with the longest name and skill under MESSAGE_MAX
+
+
+def roll_targets(char: dict) -> list[tuple[str, int]]:
+    """(label, rating) of every rated characteristic, skill and specialisation, in sheet order."""
+    out = [(f"{full} ({abbr})", char["characteristics"][abbr]) for abbr, full in model.CHARACTERISTICS]
+    for s in char["skills"]:
+        out += [(s["name"], s["rating"])] + [(f"{s['name']} ({sp['name']})", sp["rating"]) for sp in s["specialisations"]]
+    return [(label, rating) for label, rating in out if rating is not None]
+
+
+def find_target(targets: list[tuple[str, int]], text: str) -> tuple[str, int] | None:
+    """The exact label, else the only label containing ``text``. Never a guess: the result is public."""
+    t = text.strip().lower()
+    exact = [x for x in targets if x[0].lower() == t]
+    partial = [x for x in targets if t and t in x[0].lower()]
+    return exact[0] if exact else partial[0] if len(partial) == 1 else None
+
+
+@character.command(name="roll", description="Roll a Test against your character's characteristic, skill or specialisation.")
+@app_commands.describe(skill="Characteristic, skill or specialisation: start typing, then pick one",
+                       notes="What the roll is for, e.g. Sneaking past the guards")
+async def character_roll(interaction: discord.Interaction, skill: str,
+                         notes: app_commands.Range[str, 1, ROLL_NOTES_MAX] | None = None) -> None:
+    row = STORE.load(interaction.guild_id, interaction.user.id)
+    if row is None:
+        await reply(interaction, "You have no character on this server yet. Create one with `/character create`.")
+        return
+    target = find_target(roll_targets(row[0]), skill)
+    if target is None:
+        await reply(interaction, "⚠️ Nothing was rolled: that is not one of your character's rated characteristics, skills or "
+                                 "specialisations. Start typing in the **skill** box and pick one from the list.")
+        return
+    label, rating = target
+    result = rolls.build_test_result(rolls.Participant(row[0]["name"], rating, skill_name=label), notes)
+    await interaction.response.send_message(result)  # public on purpose; the client never pings anyone
+
+
+@character_roll.autocomplete("skill")
+async def roll_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    row = STORE.load(interaction.guild_id, interaction.user.id)
+    targets = roll_targets(row[0]) if row else []
+    typed = current.strip().lower()
+    return [app_commands.Choice(name=f"{label[:90]} — {rating}", value=label[:100])
+            for label, rating in targets if typed in label.lower()][:25]
 
 
 tree.add_command(character)

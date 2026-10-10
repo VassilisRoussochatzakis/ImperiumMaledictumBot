@@ -17,8 +17,19 @@ def test_command_tree_serialises():
     for sub in by_name["character"]["options"]:
         assert sub["type"] == 1 and 1 <= len(sub["description"]) <= 100
         for opt in sub.get("options", []):
-            assert opt["type"] in (6, 8, 5, 11) and not opt.get("required", False)  # user, role, boolean, attachment
             assert 1 <= len(opt["description"]) <= 100
+            if sub["name"] != "roll":
+                assert opt["type"] in (6, 8, 5, 11) and not opt.get("required", False)  # user, role, boolean, attachment
+    roll = {o["name"]: o for s in by_name["character"]["options"] if s["name"] == "roll" for o in s["options"]}
+    assert roll["skill"]["type"] == 3 and roll["skill"]["required"] and roll["skill"]["autocomplete"]
+    assert roll["notes"]["type"] == 3 and not roll["notes"].get("required") and roll["notes"]["max_length"] == bot.ROLL_NOTES_MAX
+
+
+def test_longest_roll_result_fits_one_message():
+    wide = "𝔛"  # outside the BMP, so Discord counts it twice
+    label = f"{wide * 60} ({wide * 60})"  # longest skill and specialisation names
+    worst = bot.rolls.build_test_result(bot.rolls.Participant(wide * 80, 0, roll=100, skill_name=label), wide * bot.ROLL_NOTES_MAX)
+    assert "Astounding Failure** (-10 SL)" in worst and bot.discord_len(worst) <= bot.MESSAGE_MAX
 
 
 def test_card_components_and_embeds_serialise(card_user_store):

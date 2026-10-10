@@ -11,11 +11,13 @@ from tests.conftest import (ADMIN, GM, GM_ROLE, GUILD, OTHER_GUILD, OWNER, PLAYE
 
 # -- privacy ---------------------------------------------------------------------------
 
-def test_all_sends_go_through_reply_and_are_ephemeral():
+def test_all_sends_go_through_reply_and_are_ephemeral_except_the_roll_result():
     src = Path(bot.__file__).read_text(encoding="utf-8")
     body = src.split("async def reply(")[1].split("\n\n\n")[0]
     assert body.count("ephemeral=True") == 2  # both the first response and the follow-up branch
-    outside = src.replace(body, "")
+    roll = src.split("async def character_roll(")[1].split("\n\n\n")[0]
+    assert roll.count("send_message(") == 1  # the one public message
+    outside = src.replace(body, "").replace(roll, "")
     assert "send_message(" not in outside and "followup.send(" not in outside and ".send(" not in outside
     defers = re.findall(r"defer\((.*?)\)", src)
     assert defers and all("ephemeral=True" in d for d in defers)  # only private "thinking…" placeholders
@@ -39,7 +41,7 @@ def test_context_menu_is_a_user_command_and_commands_are_guild_only():
     assert menu is not None and menu.type is discord.AppCommandType.user and menu.guild_only
     assert bot.tree.get_command("character").guild_only and bot.tree.get_command("setup").guild_only
     assert bot.tree.get_command("setup").default_permissions.administrator
-    assert {c.name for c in bot.tree.get_command("character").commands} == {"view", "edit", "create", "delete", "export", "import"}
+    assert {c.name for c in bot.tree.get_command("character").commands} == {"view", "edit", "create", "delete", "export", "import", "roll"}
     assert not bot.intents.members and not bot.intents.message_content
 
 
@@ -554,6 +556,46 @@ def test_import_explains_text_it_cannot_use(store):
             i = await paste(text)
             assert i.last[0] == "send_message" and expected in i.last[1] and i.view is None
         assert store.load(GUILD, OWNER) is None
+    run(scenario())
+
+
+# -- rolls ----------------------------------------------------------------------------------
+
+async def roll(skill, notes=None, user=OWNER):
+    """Run /character roll as ``user``; returns the interaction."""
+    i = Fake(User(user))
+    i.response.public_ok = True
+    await bot.character_roll.callback(i, skill, notes)
+    return i
+
+
+def test_roll_offers_and_uses_the_stored_ratings(card_user_store, monkeypatch):
+    monkeypatch.setattr(bot.rolls.random, "randint", lambda a, b: 42)
+    async def scenario():
+        choices = await bot.roll_choices(Fake(User(OWNER)), " LORE")
+        assert [(c.name, c.value) for c in choices] == [
+            ("Lore — 58", "Lore"), ("Lore (Adeptus Administratum) — 63", "Lore (Adeptus Administratum)")]
+        assert len(await bot.roll_choices(Fake(User(OWNER)), "")) == 12  # 9 characteristics, 2 skills, 1 specialisation
+        assert await bot.roll_choices(Fake(User(PLAYER)), "") == []  # no character, nothing to offer
+        for typed, target, outcome in (("Lore", 58, "**Success** (+1 SL) on **Lore**!"),
+                                       ("lore (adeptus administratum)", 63, "**Success** (+2 SL) on **Lore (Adeptus Administratum)**!"),
+                                       ("bs", 42, "**Marginal Success** (+0 SL) on **Ballistic Skill (BS)**!")):
+            i = await roll(typed, "Reading the forms")
+            kind, content, kw = i.last
+            assert kind == "send_message" and "ephemeral" not in kw  # posted in the channel for the table
+            assert content == f"**Test:** Reading the forms\n\n**Vex Harrow** rolled: **42** with a target of **{target}**\n{outcome}"
+        assert "Test:" not in (await roll("Awareness")).last[1]  # notes are optional
+    run(scenario())
+
+
+def test_roll_refuses_privately_what_it_cannot_roll(card_user_store):
+    card_user_store.save(actor(OWNER), OWNER, {"characteristics": {"Per": None}})
+    async def scenario():
+        for typed in ("Stealth", "l", "Perception (Per)", "  "):  # unknown, ambiguous, unrated, blank
+            i = await roll(typed)
+            assert i.last[0] == "send_message" and i.last[2].get("ephemeral") is True and "Nothing was rolled" in i.last[1]
+        i2 = await roll("Lore", user=PLAYER)
+        assert i2.last[2].get("ephemeral") is True and "no character" in i2.last[1]
     run(scenario())
 
 
