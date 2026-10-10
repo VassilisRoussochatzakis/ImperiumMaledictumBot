@@ -1,8 +1,8 @@
 """Discord layer: the "View Character" user command, /character and /setup commands, cards, forms.
 
 Every message leaves through :func:`reply` (always ephemeral) or edits an existing
-ephemeral card, so nothing is ever sent as a DM and the only channel post is the
-result of ``/character roll``, which the table needs to see.
+ephemeral card, so nothing is ever sent as a DM and the only channel post is a roll
+result (:func:`post_roll`), which the table needs to see.
 """
 from __future__ import annotations
 
@@ -51,6 +51,13 @@ async def reply(interaction: discord.Interaction, content: str | None = None, **
         await interaction.followup.send(content, ephemeral=True, **kwargs)
     else:
         await interaction.response.send_message(content, ephemeral=True, **kwargs)
+
+
+async def post_roll(interaction: discord.Interaction, name: str, label: str, rating: int, notes: str | None = None,
+                    **modifiers) -> None:
+    """The one public message: a Test result for the whole table. The client never pings anyone."""
+    you = rolls.Participant(name, rating, skill_name=label, **modifiers)
+    await interaction.response.send_message(rolls.build_test_result(you, notes))
 
 
 def discord_len(text: str) -> int:
@@ -118,6 +125,7 @@ class Card(discord.ui.View):
     """One private, interactive character card bound to the member who opened it."""
 
     expired = f"⌛ This card expired after {CARD_TIMEOUT // 60} minutes without activity. {REOPEN_HINT}"
+    can_roll = True  # roll buttons under the viewer's own skills
 
     def __init__(self, viewer_id: int, guild_id: int, owner_id: int, section: str = "characteristics", editing: bool = False):
         super().__init__(timeout=CARD_TIMEOUT)
@@ -218,6 +226,13 @@ class Card(discord.ui.View):
             label, style = ("Done editing", discord.ButtonStyle.secondary) if self.editing else ("Edit", discord.ButtonStyle.success)
             add("edit", Btn(self.toggle_edit, label=label, style=style, row=1))
         if not self.editing:
+            if self.can_roll and self.section == "skills" and self.viewer_id == self.owner_id:
+                rated = [(i, n, label, rating) for _, i in self.pages[self.page].entries
+                         for n, (label, rating) in enumerate(render.skill_rolls(self.char["skills"][i]))]
+                # ponytail: a skill with over 15 rated lines gets 15 buttons; split it across pages if anyone needs more
+                for k, (i, n, label, rating) in enumerate(rated[:render.PAGE_ROLLS]):
+                    add(f"roll:{self.version}:{i}:{n}", Btn(partial(self.roll, i, n, label), label=f"{label[:72]} — {rating}",
+                                                           emoji="🎲", row=2 + k // 5))
             return
         if self.section == "characteristics":
             add("identity", Btn(self.open_identity, label="Name & description", row=2))
@@ -257,6 +272,19 @@ class Card(discord.ui.View):
 
     async def toggle_edit(self, interaction: discord.Interaction) -> None:
         self.editing = not self.editing
+        await self.show(interaction)
+
+    async def roll(self, i: int, n: int, label: str, interaction: discord.Interaction) -> None:
+        """Post a Test against the stored rating of the button's skill or specialisation, if it is still there."""
+        row = STORE.load(self.guild_id, self.owner_id)
+        skills = row[0]["skills"] if row else []
+        rated = render.skill_rolls(skills[i]) if i < len(skills) else []
+        if n < len(rated) and rated[n][0] == label:
+            # Not through show(): on_timeout edits last_interaction's message, which must stay the card, not this roll.
+            await post_roll(interaction, row[0]["name"], *rated[n])
+            return
+        self.notice = (f"⚠️ Nothing was rolled: **{label}** was changed or removed since this card was drawn. "
+                       "Here is the latest version.")
         await self.show(interaction)
 
     # -- editing ---------------------------------------------------------------------------
@@ -381,6 +409,7 @@ class Preview(Card):
     """A read-only card of imported text. Nothing is stored until the viewer presses Save."""
 
     expired = "⌛ This preview expired, so nothing was imported. Run `/character import` again."
+    can_roll = False  # the draft is not stored, so there is nothing to roll against
 
     def __init__(self, viewer_id: int, guild_id: int, owner_id: int, char: dict, patch: dict, version: int, header: str):
         super().__init__(viewer_id, guild_id, owner_id)
@@ -670,9 +699,7 @@ MAX_ADVANTAGE = 10
 def roll_targets(char: dict) -> list[tuple[str, int]]:
     """(label, rating) of every rated characteristic, skill and specialisation, in sheet order."""
     out = [(f"{full} ({abbr})", char["characteristics"][abbr]) for abbr, full in model.CHARACTERISTICS]
-    for s in char["skills"]:
-        out += [(s["name"], s["rating"])] + [(f"{s['name']} ({sp['name']})", sp["rating"]) for sp in s["specialisations"]]
-    return [(label, rating) for label, rating in out if rating is not None]
+    return [t for t in out if t[1] is not None] + [t for s in char["skills"] for t in render.skill_rolls(s)]
 
 
 def find_target(targets: list[tuple[str, int]], text: str) -> tuple[str, int] | None:
@@ -703,11 +730,8 @@ async def character_roll(interaction: discord.Interaction, skill: str,
         await reply(interaction, "⚠️ Nothing was rolled: that is not one of your character's rated characteristics, skills or "
                                  "specialisations. Start typing in the **skill** box and pick one from the list.")
         return
-    label, rating = target
-    you = rolls.Participant(row[0]["name"], rating, test_adjustment=test_adjustment, sl_adjustment=sl_adjustment,
-                            advantage=advantage, disadvantage=disadvantage, skill_name=label)
-    result = rolls.build_test_result(you, notes)
-    await interaction.response.send_message(result)  # public on purpose; the client never pings anyone
+    await post_roll(interaction, row[0]["name"], *target, notes, test_adjustment=test_adjustment,
+                    sl_adjustment=sl_adjustment, advantage=advantage, disadvantage=disadvantage)
 
 
 @character_roll.autocomplete("skill")

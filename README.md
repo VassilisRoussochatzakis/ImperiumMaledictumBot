@@ -10,8 +10,8 @@ commands, buttons, menus and forms. A configurable GM role (and server administr
 everyone's characters.
 
 Field names follow the official Cubicle 7 character sheet. The bot stores what you type and rolls
-Tests against it (`/character roll`, the one thing it posts in the channel). It does not calculate
-totals or track advancement.
+Tests against it (`/character roll` or the 🎲 buttons on your Skills card, the one thing it posts
+in the channel). It does not calculate totals or track advancement.
 
 ---
 
@@ -135,6 +135,12 @@ selected section, with buttons:
 
 Long sections are split into pages; use **◀ Previous** / **Next ▶**. Empty sections say so.
 If the member has no character the card says so (and offers **Create character** if you may).
+
+On **your own** card, the Skills section has a 🎲 button under the list for every skill and
+specialisation with a rating, in the same order, for example **🎲 Lore (Academics) — 63**. One
+click rolls that Test and posts the result in the channel (see *Roll a Test*). A skills page holds
+at most 15 of them (three rows of five buttons), so a full sheet takes two or three pages. The
+buttons are hidden while you edit.
 
 ### Edit a character
 
@@ -317,6 +323,11 @@ Doubles add **Critical!** or **Fumble!**. Only entries with a rating can be roll
 your own character. Typing a name without picking from the list works when it matches exactly one
 entry (`bs` finds Ballistic Skill). Otherwise nothing is rolled and only you see why.
 
+**Quicker:** open your own card (`/character view`), press **Skills** and click the 🎲 button of a
+skill or specialisation. It rolls straight away against the rating stored now, with no notes or
+modifiers; use the command when the GM sets a difficulty. If that entry was renamed or removed
+since the card was drawn, nothing is rolled and the card shows the latest version.
+
 ### Delete a character
 
 ```
@@ -343,13 +354,13 @@ open, the save is refused.
 
 Everything the bot says is an *ephemeral* Discord response: visible only to the person who
 clicked, never in the channel history, never a DM. The one exception is a roll result, which
-`/character roll` posts in the channel on purpose. A card belongs to the member who opened it. It
-stays interactive for 10 minutes after the last click; then its buttons are disabled and the card
-says how to reopen it (Apps → View Character or `/character view`). After a bot restart or update,
-buttons on older cards reply "This card has expired" instead; just open a new card. A form left
-open for more than 30 minutes, or across a restart, cannot be submitted; reopen the card and redo
-the change. The delete confirmation expires after two minutes. An import preview expires like a
-card, 10 minutes after the last click, and nothing is saved.
+`/character roll` and the card's 🎲 buttons post in the channel on purpose. A card belongs to the
+member who opened it. It stays interactive for 10 minutes after the last click; then its buttons
+are disabled and the card says how to reopen it (Apps → View Character or `/character view`).
+After a bot restart or update, buttons on older cards reply "This card has expired" instead; just
+open a new card. A form left open for more than 30 minutes, or across a restart, cannot be
+submitted; reopen the card and redo the change. The delete confirmation expires after two minutes.
+An import preview expires like a card, 10 minutes after the last click, and nothing is saved.
 
 If two people edit the same character at once, the second save is refused with a notice and the
 card refreshes to the latest version, so nobody silently overwrites anybody. The same goes for an
@@ -474,8 +485,10 @@ read forgivingly and unreadable lines are reported; an import saves nothing befo
 respects permissions and staleness; a full paste box is flagged; `.txt` files are accepted and
 other files refused; long sheets and empty sections stay within Discord's limits; rolls use the
 stored rating and every modifier, are the only public message, and privately refuse names that are
-unknown, ambiguous or unrated; Success Levels, Advantage and doubles follow the rulebook examples;
-and the command and component payloads sent to Discord are within its limits.
+unknown, ambiguous or unrated; 🎲 buttons appear only on your own Skills card, one per rated line
+within Discord's limits, roll the rating stored at the click and refuse an entry changed since;
+Success Levels, Advantage and doubles follow the rulebook examples; and the command and component
+payloads sent to Discord are within its limits.
 
 ### Live acceptance checklist
 
@@ -517,8 +530,12 @@ Needs one server, the bot installed, and three accounts: **Player A**, **Player 
     `test_adjustment:-20 advantage:1 sl_adjustment:1`: the target is 20 below the rating and the
     result lists the test adjustment, Advantage and SL adjustment. Player B (no character):
     `/character roll` gets a private "no character" reply and nothing is posted.
-18. Apart from the roll results in step 17, nobody ever sees a message in the channel or a DM from
-    the bot during any of the above.
+18. Player A: `/character view`, press **Skills**: a 🎲 button for each rated skill and
+    specialisation. Click one: Player B sees the result in the channel. Note how Discord shows
+    that message (it answers a click on a private card). Player B's card of Player A has no 🎲
+    buttons, and neither has Player A's card while editing.
+19. Apart from the roll results in steps 17 and 18, nobody ever sees a message in the channel or a
+    DM from the bot during any of the above.
 
 ## 11. Assumptions and limits
 
